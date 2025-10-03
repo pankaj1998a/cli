@@ -59,7 +59,8 @@ async function main() {
         const [, provider, apiKey] = input;
         if (!provider || !apiKey) { cli.showHelp(); return; }
         const config = await loadConfig();
-        config[provider] = { apiKey };
+        if(!config[provider]) config[provider] = { apiKey };
+        else config[provider]!.apiKey = apiKey;
         await saveConfig(config);
         console.log(`API key for ${provider} saved.`);
         return;
@@ -85,20 +86,25 @@ To create a new sub-agent, please manually edit the configuration file.
 
 File Path: ${agentsFilePath}
 
-Add a new agent object to the JSON array in that file. Here is an example:
+Add an agent object to the JSON array in that file. Use the 'type' field to specify 'internal' or 'external'.
 
-[
-  {
-    "name": "code_reviewer",
-    "persona": "You are an expert code reviewer. You analyze code for bugs, style issues, and potential improvements. You only respond with code suggestions.",
-    "tools": [
-      "read_file",
-      "list_files"
-    ]
-  }
-]
+--- Example for an INTERNAL agent (uses persona and tools) ---
+{
+  "name": "code_reviewer",
+  "type": "internal",
+  "persona": "You are an expert code reviewer. You analyze code for bugs, style issues, and potential improvements.",
+  "tools": ["read_file", "list_files"]
+}
 
-Available tools are: list_files, read_file, create_file, delete_file, execute_command.
+--- Example for an EXTERNAL agent (executes a command) ---
+{
+  "name": "external_linter",
+  "type": "external",
+  "command": "eslint {{prompt}}"
+}
+
+Available tools for internal agents: list_files, read_file, create_file, delete_file, execute_command.
+For external agents, use {{prompt}} as a placeholder for the task input.
 `);
             return;
         }

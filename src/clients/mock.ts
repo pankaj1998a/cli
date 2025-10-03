@@ -22,7 +22,33 @@ export class MockClient implements AiClient {
 
     const prompt = lastMessage.content.toLowerCase();
 
-    // Simulate delegating a task
+    // Simulate calling 'edit_file'
+    if (prompt.includes('edit')) {
+        const toolCall: ToolCall = {
+            id: 'call_edit_222',
+            type: 'function',
+            function: {
+                name: 'edit_file',
+                arguments: JSON.stringify({ "0": "test_edit.txt", "1": "original", "2": "UPDATED" }),
+            },
+        };
+        return { isToolCall: true, toolCalls: [toolCall] };
+    }
+
+    // Simulate delegating to the linter agent
+    if (prompt.includes('lint')) {
+        const toolCall: ToolCall = {
+            id: 'call_lint_111',
+            type: 'function',
+            function: {
+                name: 'delegate_task',
+                arguments: JSON.stringify({ "0": "linter", "1": "src/index.ts" }),
+            },
+        };
+        return { isToolCall: true, toolCalls: [toolCall] };
+    }
+
+    // Simulate delegating to the internal test agent
     if (prompt.includes('delegate')) {
         const toolCall: ToolCall = {
             id: 'call_delegate_789',

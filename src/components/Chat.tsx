@@ -121,7 +121,7 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
         const agentExists = subAgents.some(a => a.name === agentName);
 
         if (agentExists && taskPrompt) {
-            const delegationPrompt = `delegate_task('${agentName}', '${taskPrompt}')`;
+            const delegationPrompt = `Please delegate the following task to the "${agentName}" agent: ${taskPrompt}`;
             const historyForApi = messages.map(({ role, content, tool_call_id }) => ({ role, content, tool_call_id }));
             processConversation(delegationPrompt, historyForApi);
         } else if (!agentExists) {

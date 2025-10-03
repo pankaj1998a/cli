@@ -5,11 +5,23 @@ import fs from 'fs/promises';
 const configDir = path.join(os.homedir(), '.config', 'xcode');
 const agentsFile = path.join(configDir, 'agents.json');
 
-export interface SubAgent {
+interface AgentBase {
     name: string;
+}
+
+export interface InternalAgent extends AgentBase {
+    type: 'internal';
     persona: string;
     tools: string[]; // A list of tool names this agent can use
 }
+
+export interface ExternalAgent extends AgentBase {
+    type: 'external';
+    command: string; // The command to execute for this agent
+}
+
+export type SubAgent = InternalAgent | ExternalAgent;
+
 
 export async function loadAgents(): Promise<SubAgent[]> {
 	try {

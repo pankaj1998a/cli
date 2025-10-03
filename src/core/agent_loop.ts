@@ -1,6 +1,6 @@
-import { type AiClient, type Message } from './types.js';
+import { $ } from 'bun';
+import { type AiClient, type Message, type SubAgent } from './types.js';
 import { initializeToolRunner } from './agent.js';
-import { type SubAgent } from './subagents.js';
 
 export async function processAgentTurns(
     client: AiClient,
@@ -13,13 +13,11 @@ export async function processAgentTurns(
 
     const messages: Message[] = [];
     if (agentConfig?.persona) {
-        // This is a simplified way to handle system prompts.
-        // A more robust solution might add a 'system' role to the Message type.
         messages.push({ role: 'assistant', content: agentConfig.persona });
     }
     messages.push({ role: 'user', content: prompt });
 
-    const maxTurns = 5; // Prevent infinite loops
+    const maxTurns = 5;
 
     for (let turn = 0; turn < maxTurns; turn++) {
         const toolSchemas = toolRunner.getToolSchemas();
@@ -31,7 +29,26 @@ export async function processAgentTurns(
             for (const toolCall of response.toolCalls) {
                 const args = JSON.parse(toolCall.function.arguments);
                 const argsArray = Object.values(args);
-                const toolResult = await toolRunner.run(toolCall.function.name, argsArray);
+                let toolResult = await toolRunner.run(toolCall.function.name, argsArray);
+
+                // Check for delegation signal
+                try {
+                    const parsedResult = JSON.parse(toolResult);
+                    if (parsedResult.type === 'delegation') {
+                        const { agentName, taskPrompt, agentConfig: subAgentConfig } = parsedResult;
+
+                        if (subAgentConfig.type === 'internal') {
+                            const subAgentHistory = await processAgentTurns(client, taskPrompt, subAgentConfig);
+                            toolResult = `Sub-agent "${agentName}" responded: ${subAgentHistory[subAgentHistory.length - 1]?.content || ''}`;
+                        } else if (subAgentConfig.type === 'external') {
+                            const command = subAgentConfig.command.replace('{{prompt}}', taskPrompt);
+                            const { stdout } = await $.quiet`${$.raw(command)}`;
+                            toolResult = `Output from external agent "${agentName}":\n${stdout.toString()}`;
+                        }
+                    }
+                } catch (e) {
+                    // Not a delegation signal, continue
+                }
 
                 messages.push({
                     role: 'tool',
@@ -40,7 +57,6 @@ export async function processAgentTurns(
                 });
             }
         } else {
-            // It's a final text response
             if (response.textStream) {
                 let fullText = '';
                 for await (const chunk of response.textStream) {
@@ -54,6 +70,6 @@ export async function processAgentTurns(
         }
     }
 
-    messages.push({ role: 'assistant', content: "The agent reached the maximum number of turns without providing a final answer." });
+    messages.push({ role: 'assistant', content: "Agent reached max turns." });
     return messages;
 }
