@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, type Content, type Part, FunctionDeclarationSchemaType } from '@google/generative-ai';
+import { GoogleGenerativeAI, type Content, type Part } from '@google/generative-ai';
 import { type AiClient, type Message, type ToolCall, type AiResponse } from '../core/types.js';
 
 function toGeminiMessage(msg: Message): Content {
@@ -35,45 +35,54 @@ function toGeminiMessage(msg: Message): Content {
 
 
 export class GeminiClient implements AiClient {
-    private model: any;
+    private genAI: GoogleGenerativeAI;
+    private modelName: string;
 
-    constructor(apiKey: string) {
-        const genAI = new GoogleGenerativeAI(apiKey);
-        this.model = genAI.getGenerativeModel({ model: "gemini-1.5-flash" });
+    constructor(apiKey: string, model?: string) {
+        this.genAI = new GoogleGenerativeAI(apiKey);
+        this.modelName = model || "gemini-1.5-flash";
     }
 
     async generateResponse(messages: Message[], tools: any[]): Promise<AiResponse> {
-        const history = messages.map(toGeminiMessage);
-        const lastMessage = history.pop(); // The last message is the new prompt
-
-        const chat = this.model.startChat({
-            history,
+        const model = this.genAI.getGenerativeModel({
+            model: this.modelName,
             tools: [{ functionDeclarations: tools }],
         });
 
-        const result = await chat.sendMessage(lastMessage.parts);
-        const response = result.response;
-        const responseParts = response.candidates[0].content.parts;
+        const history = messages.map(toGeminiMessage);
+        const lastMessage = history.pop();
 
-        const toolCalls: ToolCall[] = [];
-        for (const part of responseParts) {
-            if (part.functionCall) {
-                const toolCall: ToolCall = {
-                    id: part.functionCall.name, // Using name as ID for simplicity
+        const chat = model.startChat({ history });
+        const result = await chat.sendMessageStream(lastMessage!.parts);
+
+        // Since Gemini SDK v0.11.0, we need to aggregate chunks for tool calls
+        // or stream for text. We'll check the first chunk to decide.
+        let aggregatedResponse = '';
+        let toolCalls: ToolCall[] = [];
+
+        for await (const chunk of result.stream) {
+            const chunkText = chunk.text();
+            aggregatedResponse += chunkText;
+
+            if (chunk.functionCalls()) {
+                 toolCalls = chunk.functionCalls().map(fc => ({
+                    id: fc.name,
                     type: 'function',
                     function: {
-                        name: part.functionCall.name,
-                        arguments: JSON.stringify(part.functionCall.args),
+                        name: fc.name,
+                        arguments: JSON.stringify(fc.args),
                     },
-                };
-                toolCalls.push(toolCall);
+                }));
             }
         }
 
         if (toolCalls.length > 0) {
             return { isToolCall: true, toolCalls };
         } else {
-            return { isToolCall: false, text: response.text() };
+            const textStream = (async function* () {
+                yield aggregatedResponse;
+            })();
+            return { isToolCall: false, textStream };
         }
     }
 }

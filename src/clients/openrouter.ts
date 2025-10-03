@@ -31,20 +31,23 @@ function toOpenAIMessage(msg: Message): OpenAI.Chat.ChatCompletionMessageParam {
 
 export class OpenRouterClient implements AiClient {
     private openrouter: OpenAI;
+    private model: string;
 
-    constructor(apiKey: string) {
+    constructor(apiKey: string, model?: string) {
         this.openrouter = new OpenAI({
             apiKey,
             baseURL: 'https://openrouter.ai/api/v1',
         });
+        this.model = model || 'openai/gpt-4o';
     }
 
     async generateResponse(messages: Message[], tools: any[]): Promise<AiResponse> {
         const processedMessages = messages.map(toOpenAIMessage);
 
         const params: OpenAI.Chat.ChatCompletionCreateParams = {
-            model: 'openai/gpt-4o', // A capable default model on OpenRouter
+            model: this.model,
             messages: processedMessages,
+            stream: true,
         };
 
         if (tools.length > 0) {
@@ -52,21 +55,58 @@ export class OpenRouterClient implements AiClient {
             params.tool_choice = 'auto';
         }
 
-        const response = await this.openrouter.chat.completions.create(params);
-        const choice = response.choices[0];
+        const stream = await this.openrouter.chat.completions.create(params);
 
-        if (choice.finish_reason === 'tool_calls' && choice.message.tool_calls) {
-            const toolCalls: ToolCall[] = choice.message.tool_calls.map(tc => ({
-                id: tc.id,
+        const streamIterator = stream[Symbol.asyncIterator]();
+        const firstChunkResult = await streamIterator.next();
+
+        if (firstChunkResult.done) {
+            return { isToolCall: false };
+        }
+
+        const firstDelta = firstChunkResult.value.choices[0]?.delta;
+
+        if (firstDelta?.tool_calls) {
+            const toolCallChunks: OpenAI.Chat.Completions.ChatCompletionChunk.Choice.Delta.ToolCall[] = [...(firstDelta.tool_calls || [])];
+
+            for await (const chunk of { [Symbol.asyncIterator]: () => streamIterator }) {
+                 const delta = chunk.choices[0]?.delta;
+                 if (delta?.tool_calls) {
+                    for (const toolCall of delta.tool_calls) {
+                        const existing = toolCallChunks.find(c => c.index === toolCall.index);
+                        if (existing) {
+                            if (toolCall.function?.arguments) {
+                                existing.function!.arguments += toolCall.function.arguments;
+                            }
+                        } else {
+                             toolCallChunks.push(toolCall);
+                        }
+                    }
+                 }
+            }
+
+            const finalToolCalls: ToolCall[] = toolCallChunks.map(tc => ({
+                id: tc.id!,
                 type: 'function',
                 function: {
-                    name: tc.function.name,
-                    arguments: tc.function.arguments,
-                },
+                    name: tc.function!.name!,
+                    arguments: tc.function!.arguments!,
+                }
             }));
-            return { isToolCall: true, toolCalls };
+            return { isToolCall: true, toolCalls: finalToolCalls };
         } else {
-            return { isToolCall: false, text: choice.message.content || undefined };
+            const textStream = (async function* () {
+                if (firstDelta?.content) {
+                    yield firstDelta.content;
+                }
+                for await (const chunk of { [Symbol.asyncIterator]: () => streamIterator }) {
+                    const content = chunk.choices[0]?.delta?.content;
+                    if (content) {
+                        yield content;
+                    }
+                }
+            })();
+            return { isToolCall: false, textStream };
         }
     }
 }

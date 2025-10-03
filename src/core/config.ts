@@ -8,6 +8,7 @@ const configFile = path.join(configDir, 'config.json');
 export interface Config {
 	[provider: string]: {
 		apiKey: string;
+		defaultModel?: string;
 	};
 }
 

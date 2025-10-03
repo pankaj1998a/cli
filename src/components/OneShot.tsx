@@ -1,7 +1,21 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 
-const OneShot = ({ prompt, response }: { prompt: string, response: string }) => {
+const OneShot = ({ prompt, responseStream }: { prompt: string, responseStream?: AsyncIterable<string> }) => {
+  const [responseText, setResponseText] = useState('');
+
+  useEffect(() => {
+    if (!responseStream) return;
+
+    const streamResponse = async () => {
+        for await (const chunk of responseStream) {
+            setResponseText(prev => prev + chunk);
+        }
+    };
+
+    streamResponse();
+  }, [responseStream]);
+
   return (
     <Box flexDirection="column" padding={1}>
         <Box flexDirection="column" marginBottom={1}>
@@ -10,7 +24,7 @@ const OneShot = ({ prompt, response }: { prompt: string, response: string }) => 
         </Box>
         <Box flexDirection="column">
           <Text bold color="green">AI:</Text>
-          <Text>{response}</Text>
+          <Text>{responseText}</Text>
         </Box>
     </Box>
   );

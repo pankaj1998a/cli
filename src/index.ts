@@ -1,27 +1,36 @@
+import React from 'react';
+import { render } from 'ink';
 import meow from 'meow';
 import { loadConfig, saveConfig } from './core/config.js';
 import { clearHistory } from './core/history.js';
+import { loadAgents } from './core/subagents.js';
+import ListAgents from './components/ListAgents.js';
+import os from 'os';
+import path from 'path';
 
 const cli = meow(
   `
 	Usage
 	  $ xcode [prompt]
-	  $ xcode agent [prompt]
+	  $ xcode agent [sub-command] [prompt]
 
 	Commands
-	  agent [prompt]                Run the AI agent with tool-use capabilities
+	  agent [prompt]                Run the default agent with tool-use capabilities
+	  agent create                  Instructions to create a new custom sub-agent
+	  agent list                    List all available custom sub-agents
 	  config <provider> <apiKey>    Set API key for a provider
 	  history                       Manage conversation history
 
 	Options
 		--provider, -p    AI provider to use (e.g., gemini, claude)
+		--model, -m       Specify a model to use for the selected provider
 		--clear           Clear conversation history
 
 	Examples
 	  $ xcode "Hello, world!"
-	  $ xcode agent "Read the file 'test.txt' and summarize it."
-	  $ xcode config gemini YOUR_API_KEY
-	  $ xcode history --clear
+	  $ xcode agent "Read the file 'test.txt' and summarize it." --provider openai --model gpt-4
+	  $ xcode agent create
+	  $ xcode agent list
 `,
   {
     importMeta: import.meta,
@@ -29,6 +38,10 @@ const cli = meow(
       provider: {
         type: 'string',
         shortFlag: 'p',
+      },
+      model: {
+        type: 'string',
+        shortFlag: 'm',
       },
       clear: {
         type: 'boolean',
@@ -40,13 +53,11 @@ const cli = meow(
 async function main() {
     const { input, flags } = cli;
     const command = input[0];
+    const subCommand = input[1];
 
     if (command === 'config') {
         const [, provider, apiKey] = input;
-        if (!provider || !apiKey) {
-            console.error('Usage: xcode config <provider> <apiKey>');
-            process.exit(1);
-        }
+        if (!provider || !apiKey) { cli.showHelp(); return; }
         const config = await loadConfig();
         config[provider] = { apiKey };
         await saveConfig(config);
@@ -60,26 +71,55 @@ async function main() {
         return;
     }
 
-    let prompt: string;
-    let isAgentMode = false;
-
     if (command === 'agent') {
-        isAgentMode = true;
-        prompt = input.slice(1).join(' ');
-    } else {
-        prompt = input.join(' ');
-    }
+        if (subCommand === 'list') {
+            const agents = await loadAgents();
+            render(React.createElement(ListAgents, { agents }));
+            return;
+        }
 
-    // Show help if no prompt is provided in a non-TTY environment,
-    // or if the agent is run without a prompt.
-    if (!prompt && (!process.stdin.isTTY || isAgentMode)) {
-        cli.showHelp();
+        if (subCommand === 'create') {
+            const agentsFilePath = path.join(os.homedir(), '.config', 'xcode', 'agents.json');
+            console.log(`
+To create a new sub-agent, please manually edit the configuration file.
+
+File Path: ${agentsFilePath}
+
+Add a new agent object to the JSON array in that file. Here is an example:
+
+[
+  {
+    "name": "code_reviewer",
+    "persona": "You are an expert code reviewer. You analyze code for bugs, style issues, and potential improvements. You only respond with code suggestions.",
+    "tools": [
+      "read_file",
+      "list_files"
+    ]
+  }
+]
+
+Available tools are: list_files, read_file, create_file, delete_file, execute_command.
+`);
+            return;
+        }
+
+        const prompt = input.slice(1).join(' ');
+        if (!prompt) { cli.showHelp(); return; }
+        const { default: run } = await import('./run.js');
+        run(prompt, flags, true);
         return;
     }
 
-    // Dynamically import and run the chat interface
-    const { default: run } = await import('./run.js');
-    run(prompt, flags, isAgentMode);
+    const prompt = input.join(' ');
+    if (!prompt && process.stdin.isTTY) {
+        const { default: run } = await import('./run.js');
+        run('', flags, false);
+    } else if (prompt) {
+        const { default: run } = await import('./run.js');
+        run(prompt, flags, false);
+    } else {
+        cli.showHelp();
+    }
 }
 
 main();

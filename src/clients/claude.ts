@@ -31,20 +31,23 @@ function toClaudeMessage(msg: Message): Anthropic.Messages.MessageParam {
 
 export class ClaudeClient implements AiClient {
     private anthropic: Anthropic;
+    private model: string;
 
-    constructor(apiKey: string) {
+    constructor(apiKey: string, model?: string) {
         this.anthropic = new Anthropic({ apiKey });
+        this.model = model || 'claude-3-haiku-20240307'; // Haiku is a fast, capable default
     }
 
     async generateResponse(messages: Message[], tools: any[]): Promise<AiResponse> {
-        const systemPrompt = "You are a helpful AI assistant."; // Claude API can use a system prompt
+        const systemPrompt = "You are a helpful AI assistant.";
         const processedMessages = messages.map(toClaudeMessage);
 
         const params: Anthropic.Messages.MessageCreateParams = {
-            model: 'claude-3-opus-20240229', // A capable default model
+            model: this.model,
             max_tokens: 4096,
             system: systemPrompt,
             messages: processedMessages,
+            stream: true,
         };
 
         if (tools.length > 0) {
@@ -55,28 +58,45 @@ export class ClaudeClient implements AiClient {
             }));
         }
 
-        const response = await this.anthropic.messages.create(params);
+        const stream = await this.anthropic.messages.create(params);
 
-        if (response.stop_reason === 'tool_use') {
-            const toolUseContent = response.content.filter(
-                (block): block is Anthropic.Messages.ToolUseBlock => block.type === 'tool_use'
-            );
+        // Since we need to know if it's a tool call or text stream upfront,
+        // we have to process the stream internally and then decide what to return.
+        let isToolCall = false;
+        const toolCallChunks: { [id: string]: { name: string, input: string } } = {};
+        let textChunks: string[] = [];
 
-            const toolCalls: ToolCall[] = toolUseContent.map(tc => ({
-                id: tc.id,
+        for await (const event of stream) {
+            if (event.type === 'content_block_delta' && event.delta.type === 'tool_use') {
+                isToolCall = true;
+                const toolUse = event.delta.tool_use;
+                if (!toolCallChunks[toolUse.id]) {
+                    toolCallChunks[toolUse.id] = { name: toolUse.name, input: '' };
+                }
+                toolCallChunks[toolUse.id].input += toolUse.input_json_delta;
+            } else if (event.type === 'message_delta') {
+                if (event.delta.stop_reason === 'tool_use') {
+                    isToolCall = true;
+                }
+            } else if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
+                textChunks.push(event.delta.text);
+            }
+        }
+
+        if (isToolCall) {
+            const finalToolCalls: ToolCall[] = Object.entries(toolCallChunks).map(([id, { name, input }]) => ({
+                id,
                 type: 'function',
-                function: {
-                    name: tc.name,
-                    arguments: JSON.stringify(tc.input),
-                },
+                function: { name, arguments: input },
             }));
-            return { isToolCall: true, toolCalls };
+            return { isToolCall: true, toolCalls: finalToolCalls };
         } else {
-            const textContent = response.content
-                .filter((block): block is Anthropic.Messages.TextBlock => block.type === 'text')
-                .map(block => block.text)
-                .join(' ');
-            return { isToolCall: false, text: textContent || undefined };
+            const textStream = (async function* () {
+                for (const chunk of textChunks) {
+                    yield chunk;
+                }
+            })();
+            return { isToolCall: false, textStream };
         }
     }
 }

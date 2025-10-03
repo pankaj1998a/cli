@@ -35,4 +35,11 @@ export class ToolRunner {
             },
         }));
     }
+
+    getAvailableTools(): { name: string; description: string }[] {
+        return Array.from(this.tools.values()).map(tool => ({
+            name: tool.name,
+            description: tool.description,
+        }));
+    }
 }

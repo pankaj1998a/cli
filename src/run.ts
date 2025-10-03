@@ -5,24 +5,31 @@ import OneShot from './components/OneShot.js';
 import AgentOutput from './components/AgentOutput.js';
 import { loadConfig } from './core/config.js';
 import { getClient } from './clients/index.js';
-import { runAgent } from './core/agent.js';
+import { processAgentTurns } from './core/agent_loop.js';
+import { type AiResponse } from './core/types.js';
 
 export default async function (prompt: string, flags: any, isAgentMode: boolean) {
   const config = await loadConfig();
   const provider = flags.provider || 'mock';
-  const client = getClient(provider, config);
+  // Pass the full flags object to the client factory
+  const client = getClient(provider, config, flags);
 
-  if (isAgentMode) {
-    const conversationHistory = await runAgent(client, prompt);
-    render(React.createElement(AgentOutput, { messages: conversationHistory }));
-
-  } else if (prompt) {
-    // Non-interactive mode (simple prompt-response)
-    const response = await client.generateResponse([{ role: 'user', content: prompt }], []);
-    render(React.createElement(OneShot, { prompt, response: response.text || "No response." }));
-
+  if (prompt) {
+    if (isAgentMode) {
+        // Non-interactive agent run (`xcode agent "prompt"`)
+        const toolProcessingHistory = await processAgentTurns(client, prompt);
+        const finalResponseStream: AiResponse = await client.generateResponse(toolProcessingHistory, []);
+        render(React.createElement(AgentOutput, {
+            initialMessages: toolProcessingHistory,
+            finalResponseStream
+        }));
+    } else {
+        // Simple non-interactive chat (`xcode "prompt"`)
+        const response = await client.generateResponse([{ role: 'user', content: prompt }], []);
+        render(React.createElement(OneShot, { prompt, responseStream: response.textStream }));
+    }
   } else {
-    // Interactive mode (`xcode` with no prompt)
-    render(React.createElement(Chat, { ...flags, client, initialPrompt: prompt, isAgentMode }));
+    // Interactive mode (`xcode`)
+    render(React.createElement(Chat, { client, initialPrompt: '' }));
   }
 }
