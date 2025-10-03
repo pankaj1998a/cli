@@ -8,7 +8,9 @@ const agentsFile = path.join(configDir, 'agents.json');
 export interface SubAgent {
     name: string;
     persona: string;
-    tools: string[]; // A list of tool names this agent can use
+    provider?: string; // e.g., 'gemini', 'openai'
+    model?: string;    // e.g., 'gemini-pro', 'gpt-4'
+    tools: string[];   // A list of tool names this agent can use
 }
 
 export async function loadAgents(): Promise<SubAgent[]> {

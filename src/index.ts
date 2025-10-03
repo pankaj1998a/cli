@@ -1,7 +1,7 @@
 import React from 'react';
 import { render } from 'ink';
 import meow from 'meow';
-import { loadConfig, saveConfig } from './core/config.js';
+import { loadConfig, saveConfig, getConfigPath } from './core/config.js';
 import { clearHistory } from './core/history.js';
 import { loadAgents } from './core/subagents.js';
 import ListAgents from './components/ListAgents.js';
@@ -15,22 +15,26 @@ const cli = meow(
 	  $ xcode agent [sub-command] [prompt]
 
 	Commands
-	  agent [prompt]                Run the default agent with tool-use capabilities
-	  agent create                  Instructions to create a new custom sub-agent
-	  agent list                    List all available custom sub-agents
-	  config <provider> <apiKey>    Set API key for a provider
-	  history                       Manage conversation history
+	  agent [prompt]                  Run the default agent with tool-use capabilities
+	  agent create                    Instructions to create a new custom sub-agent
+	  agent list                      List all available custom sub-agents
+	  config get                      Show the current configuration (keys redacted)
+	  config path                     Show the path to the configuration file
+	  config set <provider> <apiKey>  Set API key for a provider
+	  history --clear                 Clear conversation history
 
 	Options
 		--provider, -p    AI provider to use (e.g., gemini, claude)
 		--model, -m       Specify a model to use for the selected provider
-		--clear           Clear conversation history
+		--clear           Clear conversation history (legacy, use 'history --clear')
 
 	Examples
 	  $ xcode "Hello, world!"
-	  $ xcode agent "Read the file 'test.txt' and summarize it." --provider openai --model gpt-4
+	  $ xcode agent "Read 'test.txt' and summarize it." --provider openai
 	  $ xcode agent create
 	  $ xcode agent list
+	  $ xcode config set openai sk-xxxxxxxx
+	  $ xcode config get
 `,
   {
     importMeta: import.meta,
@@ -56,16 +60,48 @@ async function main() {
     const subCommand = input[1];
 
     if (command === 'config') {
-        const [, provider, apiKey] = input;
-        if (!provider || !apiKey) { cli.showHelp(); return; }
-        const config = await loadConfig();
-        config[provider] = { apiKey };
-        await saveConfig(config);
-        console.log(`API key for ${provider} saved.`);
+        if (subCommand === 'get') {
+            const config = await loadConfig();
+            const redactedConfig = { ...config };
+            for (const provider in redactedConfig) {
+                if (redactedConfig[provider]?.apiKey) {
+                    redactedConfig[provider].apiKey = '********';
+                }
+            }
+            console.log(JSON.stringify(redactedConfig, null, 2));
+            return;
+        }
+
+        if (subCommand === 'path') {
+            console.log(getConfigPath());
+            return;
+        }
+
+        if (subCommand === 'set') {
+            const provider = input[2];
+            const apiKey = input[3];
+            if (!provider || !apiKey) {
+                console.error('Error: Please provide both a provider and an API key for the "set" command.');
+                cli.showHelp();
+                return;
+            }
+            const config = await loadConfig();
+            if (!config[provider]) {
+                config[provider] = {};
+            }
+            config[provider].apiKey = apiKey;
+            await saveConfig(config);
+            console.log(`API key for ${provider} saved.`);
+            return;
+        }
+
+        // If 'config' is called with no valid subcommand
+        console.error('Invalid "config" command. Use "get", "path", or "set".');
+        cli.showHelp();
         return;
     }
 
-    if (command === 'history' && flags.clear) {
+    if ((command === 'history' && flags.clear) || (flags.clear && !command)) {
         await clearHistory();
         console.log('Conversation history cleared.');
         return;
@@ -90,7 +126,9 @@ Add a new agent object to the JSON array in that file. Here is an example:
 [
   {
     "name": "code_reviewer",
-    "persona": "You are an expert code reviewer. You analyze code for bugs, style issues, and potential improvements. You only respond with code suggestions.",
+    "persona": "You are an expert code reviewer. You analyze code for bugs, style issues, and potential improvements.",
+    "provider": "claude",
+    "model": "claude-3-opus-20240229",
     "tools": [
       "read_file",
       "list_files"

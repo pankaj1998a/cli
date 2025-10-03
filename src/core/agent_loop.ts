@@ -1,20 +1,28 @@
-import { type AiClient, type Message } from './types.js';
+import { type Message } from './types.js';
 import { initializeToolRunner } from './agent.js';
 import { type SubAgent } from './subagents.js';
+import { type Config } from './config.js';
+import { getClient } from '../clients/index.js';
 
 export async function processAgentTurns(
-    client: AiClient,
+    config: Config,
+    flags: { provider?: string, model?: string },
     prompt: string,
     agentConfig?: SubAgent,
 ): Promise<Message[]> {
+    // Determine the provider and model, with agent-specific settings taking precedence.
+    const provider = agentConfig?.provider || flags.provider || 'mock';
+    const model = agentConfig?.model || flags.model;
+
+    // Create the appropriate AI client for this specific agent turn.
+    const client = getClient(provider, config, { model });
+
     const toolRunner = agentConfig
         ? initializeToolRunner(client, agentConfig.tools)
         : initializeToolRunner(client);
 
     const messages: Message[] = [];
     if (agentConfig?.persona) {
-        // This is a simplified way to handle system prompts.
-        // A more robust solution might add a 'system' role to the Message type.
         messages.push({ role: 'assistant', content: agentConfig.persona });
     }
     messages.push({ role: 'user', content: prompt });

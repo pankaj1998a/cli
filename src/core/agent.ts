@@ -5,7 +5,7 @@ import { createFileTool } from '../tools/createFile.js';
 import { deleteFileTool } from '../tools/deleteFile.js';
 import { executeCommandTool } from '../tools/executeCommand.js';
 import { createDelegateTaskTool } from '../tools/delegateTask.js';
-import { type AiClient } from './types.js';
+import { type Config } from './config.js';
 
 const allTools = [
     listFilesTool,
@@ -15,18 +15,23 @@ const allTools = [
     executeCommandTool,
 ];
 
-export function initializeToolRunner(client: AiClient, allowedToolNames?: string[]): ToolRunner {
+export function initializeToolRunner(
+    config: Config,
+    flags: { provider?: string, model?: string },
+    allowedToolNames?: string[]
+): ToolRunner {
     const toolRunner = new ToolRunner();
 
-    let toolsToRegister = allTools;
+    // Use a copy to avoid modifying the global `allTools` array
+    let toolsToRegister = [...allTools];
 
-    // If a list of allowed tools is provided, filter the list.
+    // If a list of allowed tools is provided (i.e., for a sub-agent), filter the list.
     if (allowedToolNames) {
         toolsToRegister = allTools.filter(tool => allowedToolNames.includes(tool.name));
     } else {
-        // If no specific tools are allowed, it's the main agent.
-        // Add the delegation tool.
-        const delegateTool = createDelegateTaskTool(client);
+        // If no specific tools are allowed, it's the main agent, which can delegate.
+        // Add the delegation tool, passing the config and flags it needs.
+        const delegateTool = createDelegateTaskTool(config, flags);
         toolsToRegister.push(delegateTool);
     }
 

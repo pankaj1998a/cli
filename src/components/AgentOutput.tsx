@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React from 'react';
 import { Box, Text } from 'ink';
-import { type Message, type ToolCall, type AiResponse } from '../core/types.js';
+import { type Message, type ToolCall } from '../core/types.js';
 
+// Renders the content of an assistant's message, which could be text or a tool call request.
 const renderContent = (content: string | ToolCall[]) => {
     if (typeof content === 'string') {
         return <Text>{content}</Text>;
@@ -21,36 +22,8 @@ const renderContent = (content: string | ToolCall[]) => {
     );
 };
 
-const AgentOutput = ({ initialMessages, finalResponseStream }: { initialMessages: Message[], finalResponseStream: AiResponse }) => {
-  const [messages, setMessages] = useState<Message[]>(initialMessages);
-
-  useEffect(() => {
-    const streamResponse = async () => {
-        if (finalResponseStream.isToolCall) {
-            // This case should be handled by the agent loop, but as a fallback:
-            setMessages(prev => [...prev, { role: 'assistant', content: '[Error: Expected a text stream, but got a tool call.]' }]);
-            return;
-        }
-
-        if (finalResponseStream.textStream) {
-            const assistantMessage: Message = { role: 'assistant', content: '' };
-            setMessages(prev => [...prev, assistantMessage]);
-
-            for await (const chunk of finalResponseStream.textStream) {
-                setMessages(prev =>
-                    prev.map((msg, index) =>
-                        index === prev.length - 1
-                        ? { ...msg, content: (msg.content as string) + chunk }
-                        : msg
-                    )
-                );
-            }
-        }
-    };
-
-    streamResponse();
-  }, [finalResponseStream]);
-
+// This component now receives a complete, static list of messages and renders them.
+const AgentOutput = ({ messages }: { messages: Message[] }) => {
   return (
     <Box flexDirection="column" paddingY={1}>
         {messages.map((msg, index) => {
