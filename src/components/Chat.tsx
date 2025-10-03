@@ -1,16 +1,25 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { Box, Text } from 'ink';
+import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import { type AiClient, type Message, type ToolCall } from '../core/types.js';
-import { loadHistory, saveHistory } from '../core/history.js';
+import { loadHistory, saveHistory, clearHistory } from '../core/history.js';
 import { initializeToolRunner, ToolRunner } from '../core/agent.js';
+import { type SubAgent, loadAgents } from '../core/subagents.js';
 
 const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:string }) => {
+  const { exit } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
   const messageIdCounter = useRef(0);
   const toolRunner = useRef<ToolRunner>(initializeToolRunner(client));
   const isInitialLoad = useRef(true);
+
+  useInput((input, key) => {
+    if (key.escape) {
+      exit();
+    }
+  });
 
   const addMessage = (role: Message['role'], content: Message['content']): number => {
     const id = messageIdCounter.current++;
@@ -30,7 +39,7 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
     let currentHistory = [...history, { role: 'user', content: prompt } as Message];
     addMessage('user', prompt);
 
-    for (let turn = 0; turn < 5; turn++) { // Max 5 turns for safety
+    for (let turn = 0; turn < 5; turn++) {
         const toolSchemas = toolRunner.current.getToolSchemas();
         const response = await client.generateResponse(currentHistory, toolSchemas);
 
@@ -52,7 +61,6 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
             for await (const chunk of response.textStream) {
                 updateMessageContent(assistantId, chunk);
             }
-            // The loop is done, we have our final text answer.
             return;
         } else {
              addMessage('assistant', '[No response from AI]');
@@ -65,7 +73,9 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
 
   useEffect(() => {
     const init = async () => {
-      const history = await loadHistory();
+      const [history, agents] = await Promise.all([loadHistory(), loadAgents()]);
+      setSubAgents(agents);
+
       if (history.length > 0) {
         setMessages(history.map((m, i) => ({ ...m, id: i })));
         messageIdCounter.current = history.length;
@@ -83,8 +93,49 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
   }, [messages]);
 
   const handleSubmit = () => {
-    const historyForApi = messages.map(({ role, content, tool_call_id }) => ({ role, content, tool_call_id }));
-    processConversation(input, historyForApi);
+    if (input.startsWith('/')) {
+        const [command] = input.split(' ');
+        switch (command) {
+            case '/clear':
+                setMessages([]);
+                clearHistory();
+                addMessage('system', 'Conversation history cleared.');
+                break;
+            case '/agents':
+                const agentList = subAgents.length > 0
+                    ? `Available sub-agents: ${subAgents.map(a => a.name).join(', ')}`
+                    : 'No custom sub-agents found. Use `xcode agent create` to add one.';
+                addMessage('system', agentList);
+                break;
+            case '/help':
+                addMessage('system', 'Available commands:\n/clear - Clears the conversation history.\n/agents - Lists available sub-agents.\n/help - Shows this help message.\n\nShortcuts:\nEsc - Exit the application.\n@<agent_name> <prompt> - Delegate a task to a sub-agent.\n#<tag> - Search conversation history (coming soon).');
+                break;
+            default:
+                addMessage('system', `Unknown command: ${command}. Type /help for a list of commands.`);
+                break;
+        }
+    } else if (input.startsWith('@')) {
+        const [mention, ...promptParts] = input.split(' ');
+        const agentName = mention.substring(1);
+        const taskPrompt = promptParts.join(' ');
+        const agentExists = subAgents.some(a => a.name === agentName);
+
+        if (agentExists && taskPrompt) {
+            const delegationPrompt = `delegate_task('${agentName}', '${taskPrompt}')`;
+            const historyForApi = messages.map(({ role, content, tool_call_id }) => ({ role, content, tool_call_id }));
+            processConversation(delegationPrompt, historyForApi);
+        } else if (!agentExists) {
+            addMessage('system', `Sub-agent "@${agentName}" not found. Type /agents to see the list of available agents.`);
+        } else {
+             addMessage('system', `You must provide a prompt after the @mention.`);
+        }
+    } else if (input.startsWith('#')) {
+        addMessage('system', 'Search functionality with #tags is coming soon!');
+    }
+    else {
+        const historyForApi = messages.map(({ role, content, tool_call_id }) => ({ role, content, tool_call_id }));
+        processConversation(input, historyForApi);
+    }
     setInput('');
   };
 
@@ -132,6 +183,12 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
                             <Text>{msg.content as string}</Text>
                         </Box>
                     );
+                case 'system':
+                     return (
+                        <Box key={key} flexDirection="column" marginY={1} paddingX={1} borderColor="blue">
+                            <Text color="blue">{msg.content as string}</Text>
+                        </Box>
+                    );
                 default:
                     return null;
             }
@@ -141,8 +198,11 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
         value={input}
         onChange={setInput}
         onSubmit={handleSubmit}
-        placeholder="Type your message..."
+        placeholder="Type message, or use /help, @<agent>, #<tag>"
       />
+      <Box marginTop={1} paddingX={1} borderStyle="single" borderColor="gray">
+        <Text dimColor>Press Esc to exit | Type /help for commands</Text>
+      </Box>
     </Box>
   );
 };

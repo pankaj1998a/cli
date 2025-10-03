@@ -1,5 +1,5 @@
 export interface Message {
-    role: 'user' | 'assistant' | 'tool';
+    role: 'user' | 'assistant' | 'tool' | 'system';
     content: string | ToolCall[];
     tool_call_id?: string;
     id?: number;
