@@ -1,53 +1,49 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Box, Text } from 'ink';
 import TextInput from 'ink-text-input';
-import { type AiClient } from '../clients/index.js';
-import { loadHistory, saveHistory, type Message } from '../core/history.js';
+import { type AiClient, type Message, type ToolCall } from '../core/types.js';
+import { loadHistory, saveHistory } from '../core/history.js';
 
-const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:string }) => {
+const Chat = ({ client, initialPrompt, isAgentMode }: { client: AiClient, initialPrompt:string, isAgentMode: boolean }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const messageIdCounter = useRef(0);
   const isInitialLoad = useRef(true);
 
-  const sendMessage = useCallback(async (prompt: string) => {
+  const processMessage = async (prompt: string, currentMessages: Message[]) => {
     if (!prompt) return;
 
-    const userId = messageIdCounter.current++;
-    const assistantId = messageIdCounter.current++;
+    const newUserMessage: Message = { id: messageIdCounter.current++, role: 'user', content: prompt };
+    const thinkingMessage: Message = { id: messageIdCounter.current++, role: 'assistant', content: '...' };
 
-    const userMessage: Message = { id: userId, role: 'user', content: prompt };
-    const thinkingMessage: Message = { id: assistantId, role: 'assistant', content: '...' };
+    setMessages([...currentMessages, newUserMessage, thinkingMessage]);
 
-    setMessages(prev => [...prev, userMessage, thinkingMessage]);
+    const historyForApi = [...currentMessages, newUserMessage].map(({ role, content }) => ({ role, content }));
 
     try {
-        const response = await client.getCompletion(prompt);
-        setMessages(prev =>
-            prev.map(msg => (msg.id === assistantId ? { ...msg, content: response } : msg))
-        );
+        const response = await client.generateResponse(historyForApi, []);
+
+        setMessages(prev => prev.map(msg => (msg.id === thinkingMessage.id ? { ...msg, content: response.text || '' } : msg)));
     } catch (error) {
         const errorMessage = error instanceof Error ? error.message : String(error);
-        setMessages(prev =>
-            prev.map(msg => (msg.id === assistantId ? { ...msg, content: `Error: ${errorMessage}` } : msg))
-        );
+        setMessages(prev => prev.map(msg => (msg.id === thinkingMessage.id ? { ...msg, content: `Error: ${errorMessage}` } : msg)));
     }
-  }, [client]);
+  };
 
   useEffect(() => {
     const init = async () => {
       const history = await loadHistory();
       if (history.length > 0) {
-        setMessages(history);
-        messageIdCounter.current = Math.max(...history.map(m => m.id)) + 1;
+        const historyWithIds = history.map((m, i) => ({ ...m, id: i }));
+        setMessages(historyWithIds);
+        messageIdCounter.current = history.length;
       } else if (initialPrompt) {
-        await sendMessage(initialPrompt);
+        await processMessage(initialPrompt, []);
       }
+      isInitialLoad.current = false;
     };
-    init().then(() => {
-        isInitialLoad.current = false;
-    });
-  }, [initialPrompt, sendMessage]);
+    init();
+  }, [initialPrompt]);
 
   useEffect(() => {
     if (isInitialLoad.current) return;
@@ -55,19 +51,27 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
   }, [messages]);
 
   const handleSubmit = () => {
-    sendMessage(input);
+    processMessage(input, messages);
     setInput('');
   };
 
+  const renderContent = (content: string | ToolCall[]) => {
+      if (typeof content === 'string') {
+          return <Text>{content}</Text>;
+      }
+      return <Text color="red">[Unsupported agent response in chat mode]</Text>;
+  }
+
   return (
     <Box flexDirection="column" padding={1}>
+        {isAgentMode && <Text bold color="magenta">--- Agent Mode ---</Text>}
       <Box flexDirection="column" flexGrow={1}>
         {messages.map(msg => (
           <Box key={msg.id} flexDirection="column" marginBottom={1}>
             <Text bold color={msg.role === 'user' ? 'cyan' : 'green'}>
               {msg.role === 'user' ? 'You' : 'AI'}:
             </Text>
-            <Text>{msg.content}</Text>
+            {renderContent(msg.content)}
           </Box>
         ))}
       </Box>

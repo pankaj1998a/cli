@@ -1,15 +1,10 @@
 import os from 'os';
 import path from 'path';
 import fs from 'fs/promises';
+import { type Message } from './types.js';
 
 const configDir = path.join(os.homedir(), '.config', 'xcode');
 const historyFile = path.join(configDir, 'history.json');
-
-export interface Message {
-  id: number;
-  role: 'user' | 'assistant';
-  content: string;
-}
 
 export async function loadHistory(): Promise<Message[]> {
 	try {
@@ -26,7 +21,9 @@ export async function loadHistory(): Promise<Message[]> {
 
 export async function saveHistory(messages: Message[]): Promise<void> {
 	await fs.mkdir(configDir, { recursive: true });
-	await fs.writeFile(historyFile, JSON.stringify(messages, null, 2));
+    // When saving, only store the core fields, not the temporary 'id' used for UI keys.
+    const messagesToSave = messages.map(({ role, content, tool_call_id }) => ({ role, content, tool_call_id }));
+	await fs.writeFile(historyFile, JSON.stringify(messagesToSave, null, 2));
 }
 
 export async function clearHistory(): Promise<void> {

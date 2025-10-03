@@ -6,18 +6,20 @@ const cli = meow(
   `
 	Usage
 	  $ xcode [prompt]
+	  $ xcode agent [prompt]
 
 	Commands
-	  config <provider> <apiKey>  Set API key for a provider
+	  agent [prompt]                Run the AI agent with tool-use capabilities
+	  config <provider> <apiKey>    Set API key for a provider
 	  history                       Manage conversation history
 
 	Options
-		--provider, -p  AI provider to use (e.g., gemini, claude)
-		--name          Your name (for testing)
-		--clear         Clear conversation history
+		--provider, -p    AI provider to use (e.g., gemini, claude)
+		--clear           Clear conversation history
 
 	Examples
 	  $ xcode "Hello, world!"
+	  $ xcode agent "Read the file 'test.txt' and summarize it."
 	  $ xcode config gemini YOUR_API_KEY
 	  $ xcode history --clear
 `,
@@ -28,9 +30,6 @@ const cli = meow(
         type: 'string',
         shortFlag: 'p',
       },
-      name: {
-        type: 'string',
-      },
       clear: {
         type: 'boolean',
       },
@@ -39,34 +38,48 @@ const cli = meow(
 );
 
 async function main() {
-  if (cli.input[0] === 'config') {
-    const [, provider, apiKey] = cli.input;
-    if (!provider || !apiKey) {
-      console.error('Usage: xcode config <provider> <apiKey>');
-      process.exit(1);
+    const { input, flags } = cli;
+    const command = input[0];
+
+    if (command === 'config') {
+        const [, provider, apiKey] = input;
+        if (!provider || !apiKey) {
+            console.error('Usage: xcode config <provider> <apiKey>');
+            process.exit(1);
+        }
+        const config = await loadConfig();
+        config[provider] = { apiKey };
+        await saveConfig(config);
+        console.log(`API key for ${provider} saved.`);
+        return;
     }
-    const config = await loadConfig();
-    config[provider] = { apiKey };
-    await saveConfig(config);
-    console.log(`API key for ${provider} saved.`);
-    return;
-  }
 
-  if (cli.input[0] === 'history' && cli.flags.clear) {
-    await clearHistory();
-    console.log('Conversation history cleared.');
-    return;
-  }
+    if (command === 'history' && flags.clear) {
+        await clearHistory();
+        console.log('Conversation history cleared.');
+        return;
+    }
 
-  const prompt = cli.input.join(' ');
-  if (!prompt && process.stdin.isTTY) {
-    cli.showHelp();
-    return;
-  }
+    let prompt: string;
+    let isAgentMode = false;
 
-  // Dynamically import and run the chat interface
-  const { default: run } = await import('./run.js');
-  run(prompt, cli.flags);
+    if (command === 'agent') {
+        isAgentMode = true;
+        prompt = input.slice(1).join(' ');
+    } else {
+        prompt = input.join(' ');
+    }
+
+    // Show help if no prompt is provided in a non-TTY environment,
+    // or if the agent is run without a prompt.
+    if (!prompt && (!process.stdin.isTTY || isAgentMode)) {
+        cli.showHelp();
+        return;
+    }
+
+    // Dynamically import and run the chat interface
+    const { default: run } = await import('./run.js');
+    run(prompt, flags, isAgentMode);
 }
 
 main();
