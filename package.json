@@ -19,7 +19,6 @@
     "@tavily/core": "^0.5.12",
     "groq-sdk": "^0.33.0",
     "ink": "^6.3.1",
-    "ink-confirm-input": "^2.0.0",
     "ink-multi-select": "^2.0.0",
     "ink-syntax-highlight": "^2.0.2",
     "ink-text-input": "^6.0.0",
