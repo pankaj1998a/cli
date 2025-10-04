@@ -5,6 +5,8 @@ import { loadConfig, saveConfig, getConfigPath } from './core/config.js';
 import { clearHistory } from './core/history.js';
 import { loadAgents } from './core/subagents.js';
 import ListAgents from './components/ListAgents.js';
+import AgentForm from './components/AgentForm.js';
+import DeleteAgentConfirmation from './components/DeleteAgentConfirmation.js';
 import os from 'os';
 import path from 'path';
 
@@ -16,8 +18,10 @@ const cli = meow(
 
 	Commands
 	  agent [prompt]                  Run the default agent with tool-use capabilities
-	  agent create                    Instructions to create a new custom sub-agent
+	  agent create                    Interactively create a new custom sub-agent
 	  agent list                      List all available custom sub-agents
+	  agent edit <name>               Interactively edit a custom sub-agent
+	  agent delete <name>             Delete a custom sub-agent
 	  config get                      Show the current configuration (keys redacted)
 	  config path                     Show the path to the configuration file
 	  config set <provider> <apiKey>  Set API key for a provider
@@ -33,6 +37,8 @@ const cli = meow(
 	  $ xcode agent "Read 'test.txt' and summarize it." --provider openai
 	  $ xcode agent create
 	  $ xcode agent list
+	  $ xcode agent edit code_reviewer
+	  $ xcode agent delete code_reviewer
 	  $ xcode config set openai sk-xxxxxxxx
 	  $ xcode config get
 `,
@@ -115,29 +121,35 @@ async function main() {
         }
 
         if (subCommand === 'create') {
-            const agentsFilePath = path.join(os.homedir(), '.config', 'xcode', 'agents.json');
-            console.log(`
-To create a new sub-agent, please manually edit the configuration file.
+            render(React.createElement(AgentForm));
+            return;
+        }
 
-File Path: ${agentsFilePath}
+        if (subCommand === 'edit') {
+            const agentName = input[2];
+            if (!agentName) {
+                console.error('Error: Please provide the name of the agent to edit.');
+                cli.showHelp();
+                return;
+            }
+            const agents = await loadAgents();
+            const agentToEdit = agents.find(a => a.name === agentName);
+            if (!agentToEdit) {
+                console.error(`Error: Agent "${agentName}" not found.`);
+                return;
+            }
+            render(React.createElement(AgentForm, { agentToEdit }));
+            return;
+        }
 
-Add a new agent object to the JSON array in that file. Here is an example:
-
-[
-  {
-    "name": "code_reviewer",
-    "persona": "You are an expert code reviewer. You analyze code for bugs, style issues, and potential improvements.",
-    "provider": "claude",
-    "model": "claude-3-opus-20240229",
-    "tools": [
-      "read_file",
-      "list_files"
-    ]
-  }
-]
-
-Available tools are: search_web, list_files, read_file, create_file, delete_file, execute_command.
-`);
+        if (subCommand === 'delete') {
+            const agentName = input[2];
+            if (!agentName) {
+                console.error('Error: Please provide the name of the agent to delete.');
+                cli.showHelp();
+                return;
+            }
+            render(React.createElement(DeleteAgentConfirmation, { agentName }));
             return;
         }
 
