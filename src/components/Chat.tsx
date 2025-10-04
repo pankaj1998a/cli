@@ -6,8 +6,9 @@ import { type Message, type ToolCall } from '../core/types.js';
 import { loadHistory, saveHistory, clearHistory } from '../core/history.js';
 import { type SubAgent, loadAgents } from '../core/subagents.js';
 import { type Config, loadConfig } from '../core/config.js';
-import { processAgentTurns, findAndReadAgentsMd } from '../core/agent_loop.js';
-import { isAsyncIterable } from 'util/types';
+import { processAgentTurns } from '../core/agent_loop.js';
+import MultiSelect from './MultiSelect.js';
+import Confirm from './Confirm.js';
 
 const renderAssistantContent = (content: string | ToolCall[] | AsyncIterable<string>) => {
     if (typeof content === 'string') {
@@ -56,8 +57,9 @@ const Chat = ({ initialPrompt }: { initialPrompt: string }) => {
       const messageStream = processAgentTurns(appConfig, {}, conversation);
 
       for await (const message of messageStream) {
-          if (isAsyncIterable(message.content)) {
-              const stream = message.content;
+          // Check for async iterable content using the language-native Symbol.asyncIterator.
+          if (message.content && typeof message.content[Symbol.asyncIterator] === 'function') {
+              const stream = message.content as AsyncIterable<string>;
               const assistantMessage: Message = { role: 'assistant', content: '' };
               setMessages(prev => [...prev, assistantMessage]);
 

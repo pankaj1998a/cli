@@ -1,5 +1,5 @@
 import { type Tool } from './index.js';
-import Tavily from '@tavily/core';
+import { tavily } from '@tavily/core';
 import { loadConfig } from '../core/config.js';
 
 export const searchWebTool: Tool = {
@@ -19,8 +19,9 @@ export const searchWebTool: Tool = {
                 return 'Error: Tavily API key not found. Please run `xcode config set tavily <YOUR_API_KEY>`.';
             }
 
-            const tavily = new Tavily({ apiKey });
-            const response = await tavily.search(query, {
+            // Correct usage: Call the `tavily` factory function to get a client.
+            const client = tavily({ apiKey });
+            const response = await client.search(query, {
                 maxResults: 5, // Keep the context concise for the LLM
             });
 

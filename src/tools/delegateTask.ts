@@ -2,12 +2,10 @@ import { type Tool } from './index.js';
 import { loadAgents } from '../core/subagents.js';
 import { processAgentTurns } from '../core/agent_loop.js';
 import { type Config } from '../core/config.js';
-import { isAsyncIterable } from 'util/types';
 import { type Message } from '../core/types.js';
 
 export const createDelegateTaskTool = (
-    config: Config,
-    flags: { provider?: string, model?: string }
+    config: Config
 ): Tool => {
     return {
         name: 'delegate_task',
@@ -25,19 +23,16 @@ export const createDelegateTaskTool = (
                 return `Error: Sub-agent with name "${agentName}" not found.`;
             }
 
-            // The sub-agent's conversation starts with a single user message.
             const initialConversation: Message[] = [{ role: 'user', content: taskPrompt }];
-
-            // When delegating, we pass empty flags `{}` to ensure the sub-agent uses its own
-            // configuration from agents.json, rather than inheriting the parent's CLI flags.
             const messageStream = processAgentTurns(config, {}, initialConversation, agentConfig);
 
             let finalContent = '';
 
             for await (const message of messageStream) {
-                if (message.role === 'assistant' && isAsyncIterable(message.content)) {
+                // Check for async iterable content using the language-native Symbol.asyncIterator.
+                if (message.role === 'assistant' && message.content && typeof message.content[Symbol.asyncIterator] === 'function') {
                     let fullText = '';
-                    for await (const chunk of message.content) {
+                    for await (const chunk of message.content as AsyncIterable<string>) {
                         fullText += chunk;
                     }
                     finalContent = fullText;
