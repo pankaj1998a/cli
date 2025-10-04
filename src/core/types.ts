@@ -1,6 +1,6 @@
 export interface Message {
     role: 'user' | 'assistant' | 'tool' | 'system';
-    content: string | ToolCall[];
+    content: string | ToolCall[] | AsyncIterable<string>;
     tool_call_id?: string;
     id?: number;
 }

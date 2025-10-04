@@ -24,7 +24,7 @@ const cli = meow(
 	  history --clear                 Clear conversation history
 
 	Options
-		--provider, -p    AI provider to use (e.g., gemini, claude)
+		--provider, -p    AI provider to use (e.g., gemini, claude, nvidia)
 		--model, -m       Specify a model to use for the selected provider
 		--clear           Clear conversation history (legacy, use 'history --clear')
 
@@ -136,7 +136,7 @@ Add a new agent object to the JSON array in that file. Here is an example:
   }
 ]
 
-Available tools are: list_files, read_file, create_file, delete_file, execute_command.
+Available tools are: search_web, list_files, read_file, create_file, delete_file, execute_command.
 `);
             return;
         }

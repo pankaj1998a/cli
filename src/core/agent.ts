@@ -5,9 +5,11 @@ import { createFileTool } from '../tools/createFile.js';
 import { deleteFileTool } from '../tools/deleteFile.js';
 import { executeCommandTool } from '../tools/executeCommand.js';
 import { createDelegateTaskTool } from '../tools/delegateTask.js';
+import { searchWebTool } from '../tools/searchWeb.js';
 import { type Config } from './config.js';
 
 const allTools = [
+    searchWebTool,
     listFilesTool,
     readFileTool,
     createFileTool,

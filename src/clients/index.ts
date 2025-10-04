@@ -7,6 +7,7 @@ import { ClaudeClient } from './claude.js';
 import { GroqClient } from './groq.js';
 import { OpenRouterClient } from './openrouter.js';
 import { QwenClient } from './qwen.js';
+import { NvidiaClient } from './nvidia.js';
 
 export * from '../core/types.js';
 
@@ -39,6 +40,8 @@ export function getClient(provider: string, config: Config, flags: { model?: str
       return new OpenRouterClient(getApiKey('openrouter'), selectedModel);
     case 'qwen':
         return new QwenClient(getApiKey('qwen'), selectedModel);
+    case 'nvidia':
+        return new NvidiaClient(getApiKey('nvidia'), selectedModel);
     default:
       throw new Error(`Unknown or unsupported provider: "${provider}"`);
   }
