@@ -6,9 +6,13 @@
   },
   "type": "module",
   "private": true,
+  "scripts": {
+    "build": "bun build src/index.ts --outfile cli.js --target bun --external=\"@anthropic-ai/sdk\" --external=\"@google/generative-ai\" --external=\"@tavily/core\" --external=\"groq-sdk\" --external=\"ink\" --external=\"ink-syntax-highlight\" --external=\"ink-text-input\" --external=\"meow\" --external=\"openai\" --external=\"react\""
+  },
   "devDependencies": {
     "@types/bun": "latest",
-    "@types/react": "^19.0.0"
+    "@types/react": "^19.0.0",
+    "react-devtools-core": "^6.1.5"
   },
   "peerDependencies": {
     "typescript": "^5"
@@ -19,8 +23,6 @@
     "@tavily/core": "^0.5.12",
     "groq-sdk": "^0.33.0",
     "ink": "^6.3.1",
-    "ink-confirm-input": "^2.0.0",
-    "ink-multi-select": "^2.0.0",
     "ink-syntax-highlight": "^2.0.2",
     "ink-text-input": "^6.0.0",
     "meow": "^14.0.0",

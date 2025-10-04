@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useApp } from 'ink';
-import ConfirmInput from 'ink-confirm-input';
+import Confirm from './Confirm.js';
 import { loadAgents, saveAgents } from '../core/subagents.js';
 
 const DeleteAgentConfirmation = ({ agentName }: { agentName: string }) => {
@@ -47,7 +47,7 @@ const DeleteAgentConfirmation = ({ agentName }: { agentName: string }) => {
             return (
                 <Box>
                     <Text>Are you sure you want to delete the agent "{agentName}"? (y/n) </Text>
-                    <ConfirmInput onConfirm={handleConfirm} />
+                    <Confirm onConfirm={handleConfirm} />
                 </Box>
             );
         case 'deleted':

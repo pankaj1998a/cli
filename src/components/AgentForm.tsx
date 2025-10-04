@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Box, Text, useApp } from 'ink';
 import TextInput from 'ink-text-input';
-import MultiSelect from 'ink-multi-select';
+import MultiSelect from './MultiSelect.js';
 import { type SubAgent, loadAgents, saveAgents } from '../core/subagents.js';
 import { allToolNames } from '../core/agent.js';
 

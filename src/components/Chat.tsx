@@ -2,169 +2,29 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
 import SyntaxHighlight from 'ink-syntax-highlight';
-import { type AiClient, type Message, type ToolCall } from '../core/types.js';
+import { type Message, type ToolCall } from '../core/types.js';
 import { loadHistory, saveHistory, clearHistory } from '../core/history.js';
-import { initializeToolRunner } from '../core/agent.js';
 import { type SubAgent, loadAgents } from '../core/subagents.js';
 import { type Config, loadConfig } from '../core/config.js';
+import { processAgentTurns } from '../core/agent_loop.js';
+import MultiSelect from './MultiSelect.js';
+import Confirm from './Confirm.js';
 
-
-// This function parses the assistant's content and renders code blocks with syntax highlighting.
-const renderAssistantContent = (content: string) => {
-    const parts = content.split(/(\`\`\`(?:\w+)?\n[\s\S]*?\n\`\`\`)/);
-
-    return parts.map((part, index) => {
-        const codeBlockMatch = part.match(/\`\`\`(\w+)?\n([\s\S]*?)\n\`\`\`/);
-        if (codeBlockMatch) {
-            const language = codeBlockMatch[1] || 'bash';
-            const code = codeBlockMatch[2];
-            return <SyntaxHighlight key={index} code={code} language={language} />;
-        }
-        // Render plain text parts
-        return <Text key={index}>{part}</Text>;
-    });
-};
-
-const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:string }) => {
-  const { exit } = useApp();
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [input, setInput] = useState('');
-  const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
-  const [appConfig, setAppConfig] = useState<Config>({});
-  const messageIdCounter = useRef(0);
-  const isInitialLoad = useRef(true);
-
-  useInput((input, key) => {
-    if (key.escape) {
-      exit();
-    }
-  });
-
-  const addMessage = (role: Message['role'], content: Message['content']): number => {
-    const id = messageIdCounter.current++;
-    setMessages(prev => [...prev, { id, role, content }]);
-    return id;
-  };
-
-  const updateMessageContent = (id: number, chunk: string) => {
-    setMessages(prev =>
-      prev.map(msg =>
-        msg.id === id ? { ...msg, content: (msg.content as string) + chunk } : msg
-      )
-    );
-  };
-
-  const processConversation = useCallback(async (prompt: string, history: Message[]) => {
-    let currentHistory = [...history, { role: 'user', content: prompt } as Message];
-    addMessage('user', prompt);
-
-    const toolRunner = initializeToolRunner(appConfig, {}); // Pass config and flags
-
-    for (let turn = 0; turn < 5; turn++) {
-        const toolSchemas = toolRunner.getToolSchemas();
-        const response = await client.generateResponse(currentHistory, toolSchemas);
-
-        if (response.isToolCall && response.toolCalls) {
-            const toolCalls = response.toolCalls;
-            currentHistory.push({ role: 'assistant', content: toolCalls });
-            addMessage('assistant', toolCalls);
-
-            for (const toolCall of toolCalls) {
-                const toolResult = await toolRunner.run(
-                    toolCall.function.name,
-                    Object.values(JSON.parse(toolCall.function.arguments))
-                );
-                currentHistory.push({ role: 'tool', tool_call_id: toolCall.id, content: toolResult });
-                addMessage('tool', toolResult);
+const renderAssistantContent = (content: string | ToolCall[] | AsyncIterable<string>) => {
+    if (typeof content === 'string') {
+        const parts = content.split(/(\`\`\`(?:\w+)?\n[\s\S]*?\n\`\`\`)/);
+        return parts.map((part, index) => {
+            const codeBlockMatch = part.match(/\`\`\`(\w+)?\n([\s\S]*?)\n\`\`\`/);
+            if (codeBlockMatch) {
+                const language = codeBlockMatch[1] || 'bash';
+                const code = codeBlockMatch[2];
+                return <SyntaxHighlight key={index} code={code} language={language} />;
             }
-        } else if (response.textStream) {
-            const assistantId = addMessage('assistant', '');
-            for await (const chunk of response.textStream) {
-                updateMessageContent(assistantId, chunk);
-            }
-            return;
-        } else {
-             addMessage('assistant', '[No response from AI]');
-             return;
-        }
+            return <Text key={index}>{part}</Text>;
+        });
     }
-    addMessage('assistant', '[Agent reached max turns]');
 
-  }, [client, appConfig]);
-
-  useEffect(() => {
-    const init = async () => {
-      const [history, agents, config] = await Promise.all([loadHistory(), loadAgents(), loadConfig()]);
-      setSubAgents(agents);
-      setAppConfig(config);
-
-      if (history.length > 0) {
-        setMessages(history.map((m, i) => ({ ...m, id: i })));
-        messageIdCounter.current = history.length;
-      } else if (initialPrompt) {
-        await processConversation(initialPrompt, []);
-      }
-      isInitialLoad.current = false;
-    };
-    init();
-  }, [initialPrompt, processConversation]);
-
-  useEffect(() => {
-    if (isInitialLoad.current || messages.length === 0) return;
-    saveHistory(messages);
-  }, [messages]);
-
-  const handleSubmit = () => {
-    if (input.startsWith('/')) {
-        const [command] = input.split(' ');
-        switch (command) {
-            case '/clear':
-                setMessages([]);
-                clearHistory();
-                addMessage('system', 'Conversation history cleared.');
-                break;
-            case '/agents':
-                const agentList = subAgents.length > 0
-                    ? `Available sub-agents: ${subAgents.map(a => a.name).join(', ')}`
-                    : 'No custom sub-agents found. Use `xcode agent create` to add one.';
-                addMessage('system', agentList);
-                break;
-            case '/help':
-                addMessage('system', 'Available commands:\n/clear - Clears the conversation history.\n/agents - Lists available sub-agents.\n/help - Shows this help message.\n\nShortcuts:\nEsc - Exit the application.\n@<agent_name> <prompt> - Delegate a task to a sub-agent.\n#<tag> - Search conversation history (coming soon).');
-                break;
-            default:
-                addMessage('system', `Unknown command: ${command}. Type /help for a list of commands.`);
-                break;
-        }
-    } else if (input.startsWith('@')) {
-        const [mention, ...promptParts] = input.split(' ');
-        const agentName = mention.substring(1);
-        const taskPrompt = promptParts.join(' ');
-        const agentExists = subAgents.some(a => a.name === agentName);
-
-        if (agentExists && taskPrompt) {
-            const delegationPrompt = `delegate_task('${agentName}', '${taskPrompt}')`;
-            const historyForApi = messages.map(({ role, content, tool_call_id }) => ({ role, content, tool_call_id }));
-            processConversation(delegationPrompt, historyForApi);
-        } else if (!agentExists) {
-            addMessage('system', `Sub-agent "@${agentName}" not found. Type /agents to see the list of available agents.`);
-        } else {
-             addMessage('system', `You must provide a prompt after the @mention.`);
-        }
-    } else if (input.startsWith('#')) {
-        addMessage('system', 'Search functionality with #tags is coming soon!');
-    }
-    else {
-        const historyForApi = messages.map(({ role, content, tool_call_id }) => ({ role, content, tool_call_id }));
-        processConversation(input, historyForApi);
-    }
-    setInput('');
-  };
-
-  const renderContent = (content: string | ToolCall[]) => {
-      if (typeof content === 'string') {
-          return <Box flexDirection="column">{renderAssistantContent(content)}</Box>;
-      }
+    if (Array.isArray(content)) {
       return (
         <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor="gray">
             <Text bold>Requesting Tool Call:</Text>
@@ -175,56 +35,101 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
                 </Box>
             ))}
         </Box>
-    );
-  }
+      );
+    }
+    return <Text>[Streaming content...]</Text>;
+};
+
+const Chat = ({ initialPrompt }: { initialPrompt: string }) => {
+  const { exit } = useApp();
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [input, setInput] = useState('');
+  const [appConfig, setAppConfig] = useState<Config>({});
+  const [isRunning, setIsRunning] = useState(false);
+  const isInitialLoad = useRef(true);
+
+  useInput((_, key) => {
+    if (key.escape) exit();
+  });
+
+  const runAgentConversation = useCallback(async (conversation: Message[]) => {
+      setIsRunning(true);
+      const messageStream = processAgentTurns(appConfig, {}, conversation);
+
+      for await (const message of messageStream) {
+          // Check for async iterable content using the language-native Symbol.asyncIterator.
+          if (message.content && typeof message.content[Symbol.asyncIterator] === 'function') {
+              const stream = message.content as AsyncIterable<string>;
+              const assistantMessage: Message = { role: 'assistant', content: '' };
+              setMessages(prev => [...prev, assistantMessage]);
+
+              for await (const chunk of stream) {
+                  setMessages(prev =>
+                      prev.map((msg, index) =>
+                          index === prev.length - 1
+                              ? { ...msg, content: (msg.content as string) + chunk }
+                              : msg
+                      )
+                  );
+              }
+          } else {
+              setMessages(prev => [...prev, message]);
+          }
+      }
+      setIsRunning(false);
+  }, [appConfig]);
+
+  useEffect(() => {
+    const init = async () => {
+      const [history, config] = await Promise.all([loadHistory(), loadConfig()]);
+      setAppConfig(config);
+      setMessages(history);
+
+      if (initialPrompt) {
+        const fullConversation = [...history, { role: 'user' as const, content: initialPrompt }];
+        setMessages(fullConversation);
+        await runAgentConversation(fullConversation);
+      }
+      isInitialLoad.current = false;
+    };
+    init();
+  }, [initialPrompt, runAgentConversation]);
+
+  useEffect(() => {
+    if (isInitialLoad.current || messages.length === 0) return;
+    saveHistory(messages);
+  }, [messages]);
+
+  const handleSubmit = () => {
+    if (!input.trim() || isRunning) return;
+
+    const userMessage: Message = { role: 'user', content: input };
+    const newConversation = [...messages, userMessage];
+    setMessages(newConversation);
+    runAgentConversation(newConversation);
+    setInput('');
+  };
 
   return (
-    <Box flexDirection="column" padding={1}>
+    <Box flexDirection="column" padding={1} height="100%">
       <Box flexDirection="column" flexGrow={1}>
-        {messages.map((msg, index) => {
-            const key = msg.id ?? index;
-            switch (msg.role) {
-                case 'user':
-                    return (
-                        <Box key={key} flexDirection="column" marginBottom={1}>
-                            <Text bold color="cyan">You:</Text>
-                            <Text>{msg.content as string}</Text>
-                        </Box>
-                    );
-                case 'assistant':
-                    return (
-                        <Box key={key} flexDirection="column" marginBottom={1}>
-                            <Text bold color="green">AI:</Text>
-                            {renderContent(msg.content)}
-                        </Box>
-                    );
-                case 'tool':
-                    return (
-                        <Box key={key} flexDirection="column" marginY={1} borderStyle="single" paddingX={1} borderColor="yellow">
-                            <Text bold color="yellow">Tool Output:</Text>
-                            <Text>{msg.content as string}</Text>
-                        </Box>
-                    );
-                case 'system':
-                     return (
-                        <Box key={key} flexDirection="column" marginY={1} paddingX={1} borderColor="blue">
-                            <Text color="blue">{msg.content as string}</Text>
-                        </Box>
-                    );
-                default:
-                    return null;
-            }
-        })}
+        {messages.map((msg, index) => (
+            <Box key={index} flexDirection="column" marginBottom={1}>
+                {msg.role === 'user' && <Text bold color="cyan">You:</Text>}
+                {msg.role === 'assistant' && <Text bold color="green">AI:</Text>}
+                {msg.role === 'tool' && <Text bold color="yellow">Tool Output:</Text>}
+                {msg.role === 'system' && <Text bold color="gray">System:</Text>}
+                {renderAssistantContent(msg.content as any)}
+            </Box>
+        ))}
+        {isRunning && <Text>...</Text>}
       </Box>
       <TextInput
         value={input}
         onChange={setInput}
         onSubmit={handleSubmit}
-        placeholder="Type message, or use /help, @<agent>, #<tag>"
+        placeholder={isRunning ? "Agent is running..." : "Type your message..."}
       />
-      <Box marginTop={1} paddingX={1} borderStyle="single" borderColor="gray">
-        <Text dimColor>Press Esc to exit | Type /help for commands</Text>
-      </Box>
     </Box>
   );
 };

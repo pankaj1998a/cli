@@ -2,7 +2,6 @@ import React, { useState, useEffect } from 'react';
 import { Box, Text } from 'ink';
 import SyntaxHighlight from 'ink-syntax-highlight';
 import { type Message, type ToolCall } from '../core/types.js';
-import { isAsyncIterable } from 'util/types';
 
 // This function parses the assistant's content and renders code blocks with syntax highlighting.
 const renderAssistantContent = (content: string) => {
@@ -52,8 +51,9 @@ const AgentOutput = ({ messageStream }: { messageStream: AsyncGenerator<Message>
     useEffect(() => {
         const processStream = async () => {
             for await (const message of messageStream) {
-                if (isAsyncIterable(message.content)) {
-                    const stream = message.content;
+                // Check if the content is a stream using the language-native Symbol.asyncIterator.
+                if (message.content && typeof message.content[Symbol.asyncIterator] === 'function') {
+                    const stream = message.content as AsyncIterable<string>;
                     const assistantMessage: Message = { role: 'assistant', content: '' };
                     setMessages(prev => [...prev, assistantMessage]);
 

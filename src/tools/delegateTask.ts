@@ -2,10 +2,10 @@ import { type Tool } from './index.js';
 import { loadAgents } from '../core/subagents.js';
 import { processAgentTurns } from '../core/agent_loop.js';
 import { type Config } from '../core/config.js';
+import { type Message } from '../core/types.js';
 
 export const createDelegateTaskTool = (
-    config: Config,
-    flags: { provider?: string, model?: string }
+    config: Config
 ): Tool => {
     return {
         name: 'delegate_task',
@@ -23,14 +23,26 @@ export const createDelegateTaskTool = (
                 return `Error: Sub-agent with name "${agentName}" not found.`;
             }
 
-            // Run the sub-agent loop, passing the necessary config for it
-            // to create its own, correctly-configured AI client.
-            const finalMessages = await processAgentTurns(config, flags, taskPrompt, agentConfig);
+            const initialConversation: Message[] = [{ role: 'user', content: taskPrompt }];
+            const messageStream = processAgentTurns(config, {}, initialConversation, agentConfig);
 
-            // Extract and return the final response from the sub-agent
-            const finalResponse = finalMessages[finalMessages.length - 1];
-            if (finalResponse && finalResponse.role === 'assistant' && typeof finalResponse.content === 'string') {
-                return `Sub-agent "${agentName}" responded: ${finalResponse.content}`;
+            let finalContent = '';
+
+            for await (const message of messageStream) {
+                // Check for async iterable content using the language-native Symbol.asyncIterator.
+                if (message.role === 'assistant' && message.content && typeof message.content[Symbol.asyncIterator] === 'function') {
+                    let fullText = '';
+                    for await (const chunk of message.content as AsyncIterable<string>) {
+                        fullText += chunk;
+                    }
+                    finalContent = fullText;
+                } else if (message.role === 'assistant' && typeof message.content === 'string') {
+                    finalContent = message.content;
+                }
+            }
+
+            if (finalContent) {
+                return `Sub-agent "${agentName}" responded: ${finalContent}`;
             }
 
             return `Sub-agent "${agentName}" finished without a final text response.`;

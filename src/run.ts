@@ -6,16 +6,16 @@ import AgentOutput from './components/AgentOutput.js';
 import { loadConfig } from './core/config.js';
 import { getClient } from './clients/index.js';
 import { processAgentTurns } from './core/agent_loop.js';
+import { type Message } from './core/types.js';
 
 export default async function (prompt: string, flags: any, isAgentMode: boolean) {
   const config = await loadConfig();
 
   if (prompt) {
     if (isAgentMode) {
-        // Non-interactive agent run (`xcode agent "prompt"`)
-        // processAgentTurns is now an async generator. We pass the generator
-        // directly to the UI component, which will handle rendering the stream.
-        const messageStream = processAgentTurns(config, flags, prompt);
+        // For a non-interactive agent run, the conversation starts with a single user message.
+        const initialConversation: Message[] = [{ role: 'user', content: prompt }];
+        const messageStream = processAgentTurns(config, flags, initialConversation);
 
         render(React.createElement(AgentOutput, {
             messageStream,
@@ -30,8 +30,7 @@ export default async function (prompt: string, flags: any, isAgentMode: boolean)
     }
   } else {
     // Interactive mode (`xcode`)
-    const provider = flags.provider || 'mock';
-    const client = getClient(provider, config, flags);
-    render(React.createElement(Chat, { client, initialPrompt: '' }));
+    // The Chat component now handles its own client creation and conversation logic.
+    render(React.createElement(Chat, { initialPrompt: '' }));
   }
 }

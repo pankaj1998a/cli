@@ -2,19 +2,24 @@ import React from 'react';
 import { render } from 'ink';
 import meow from 'meow';
 import { loadConfig, saveConfig, getConfigPath } from './core/config.js';
-import { clearHistory } from './core/history.js';
+import {
+    clearHistory,
+    listHistories,
+    saveHistoryAs,
+    loadHistoryFrom,
+    deleteHistoryCheckpoint
+} from './core/history.js';
 import { loadAgents } from './core/subagents.js';
 import ListAgents from './components/ListAgents.js';
 import AgentForm from './components/AgentForm.js';
 import DeleteAgentConfirmation from './components/DeleteAgentConfirmation.js';
-import os from 'os';
-import path from 'path';
 
 const cli = meow(
   `
 	Usage
 	  $ xcode [prompt]
 	  $ xcode agent [sub-command] [prompt]
+    $ cat <file> | xcode [prompt]
 
 	Commands
 	  agent [prompt]                  Run the default agent with tool-use capabilities
@@ -25,12 +30,15 @@ const cli = meow(
 	  config get                      Show the current configuration (keys redacted)
 	  config path                     Show the path to the configuration file
 	  config set <provider> <apiKey>  Set API key for a provider
-	  history --clear                 Clear conversation history
+	  history list                    List all saved conversation checkpoints
+	  history save <name>             Save the current conversation as a checkpoint
+	  history load <name>             Load a conversation from a checkpoint
+	  history delete <name>           Delete a conversation checkpoint
+	  history clear                   Clear the current conversation history
 
 	Options
 		--provider, -p    AI provider to use (e.g., gemini, claude, nvidia)
 		--model, -m       Specify a model to use for the selected provider
-		--clear           Clear conversation history (legacy, use 'history --clear')
 
 	Examples
 	  $ xcode "Hello, world!"
@@ -41,6 +49,7 @@ const cli = meow(
 	  $ xcode agent delete code_reviewer
 	  $ xcode config set openai sk-xxxxxxxx
 	  $ xcode config get
+    $ cat file.js | xcode "Refactor this code."
 `,
   {
     importMeta: import.meta,
@@ -53,12 +62,21 @@ const cli = meow(
         type: 'string',
         shortFlag: 'm',
       },
-      clear: {
-        type: 'boolean',
-      },
     },
   }
 );
+
+// Helper to read from stdin if available.
+async function readStdin(): Promise<string> {
+    if (process.stdin.isTTY) {
+        return '';
+    }
+    let result = '';
+    for await (const chunk of process.stdin) {
+        result += chunk;
+    }
+    return result;
+}
 
 async function main() {
     const { input, flags } = cli;
@@ -66,6 +84,8 @@ async function main() {
     const subCommand = input[1];
 
     if (command === 'config') {
+        const name = input[2];
+        const value = input[3];
         if (subCommand === 'get') {
             const config = await loadConfig();
             const redactedConfig = { ...config };
@@ -84,34 +104,79 @@ async function main() {
         }
 
         if (subCommand === 'set') {
-            const provider = input[2];
-            const apiKey = input[3];
-            if (!provider || !apiKey) {
-                console.error('Error: Please provide both a provider and an API key for the "set" command.');
+            if (!name || !value) {
+                console.error('Error: Please provide both a provider/key and a value for the "set" command.');
                 cli.showHelp();
                 return;
             }
             const config = await loadConfig();
-            if (!config[provider]) {
-                config[provider] = {};
+            if (!config[name]) {
+                config[name] = {};
             }
-            config[provider].apiKey = apiKey;
+            config[name].apiKey = value;
             await saveConfig(config);
-            console.log(`API key for ${provider} saved.`);
+            console.log(`Configuration for ${name} saved.`);
             return;
         }
 
-        // If 'config' is called with no valid subcommand
         console.error('Invalid "config" command. Use "get", "path", or "set".');
         cli.showHelp();
         return;
     }
 
-    if ((command === 'history' && flags.clear) || (flags.clear && !command)) {
-        await clearHistory();
-        console.log('Conversation history cleared.');
+    if (command === 'history') {
+        const name = input[2];
+        try {
+            switch (subCommand) {
+                case 'list':
+                    const histories = await listHistories();
+                    if (histories.length === 0) {
+                        console.log('No saved conversation checkpoints found.');
+                    } else {
+                        console.log('Saved conversation checkpoints:');
+                        histories.forEach(h => console.log(`- ${h}`));
+                    }
+                    break;
+                case 'save':
+                    if (!name) {
+                        console.error('Error: A name is required to save the history checkpoint.');
+                        return;
+                    }
+                    await saveHistoryAs(name);
+                    console.log(`Conversation saved as "${name}".`);
+                    break;
+                case 'load':
+                    if (!name) {
+                        console.error('Error: A name is required to load a history checkpoint.');
+                        return;
+                    }
+                    await loadHistoryFrom(name);
+                    console.log(`Conversation "${name}" loaded. Start a new session to use it.`);
+                    break;
+                case 'delete':
+                    if (!name) {
+                        console.error('Error: A name is required to delete a history checkpoint.');
+                        return;
+                    }
+                    await deleteHistoryCheckpoint(name);
+                    console.log(`Conversation checkpoint "${name}" deleted.`);
+                    break;
+                case 'clear':
+                    await clearHistory();
+                    console.log('Current conversation history cleared.');
+                    break;
+                default:
+                    console.error('Invalid history command. Use list, save, load, delete, or clear.');
+                    cli.showHelp();
+                    break;
+            }
+        } catch (error) {
+            console.error(`Error: ${error.message}`);
+        }
         return;
     }
+
+    const stdinContent = await readStdin();
 
     if (command === 'agent') {
         if (subCommand === 'list') {
@@ -153,20 +218,37 @@ async function main() {
             return;
         }
 
-        const prompt = input.slice(1).join(' ');
-        if (!prompt) { cli.showHelp(); return; }
+        const agentCliInput = input.slice(1).join(' ');
+        let agentPrompt = agentCliInput;
+        if (stdinContent) {
+            agentPrompt = `The following content was piped into the command:\n\n${stdinContent}\n\n---\n\n${agentCliInput}`;
+        }
+
+        if (!agentPrompt.trim()) {
+            cli.showHelp();
+            return;
+        }
+
         const { default: run } = await import('./run.js');
-        run(prompt, flags, true);
+        run(agentPrompt, flags, true);
         return;
     }
 
-    const prompt = input.join(' ');
-    if (!prompt && process.stdin.isTTY) {
+    // Standard chat mode logic
+    const cliInput = input.join(' ');
+    let finalPrompt = cliInput;
+    if (stdinContent) {
+        finalPrompt = `The following content was piped into the command:\n\n${stdinContent}\n\n---\n\n${cliInput}`;
+    }
+
+    if (!finalPrompt.trim() && process.stdin.isTTY) {
+        // Interactive mode (no prompt from cli or stdin)
         const { default: run } = await import('./run.js');
         run('', flags, false);
-    } else if (prompt) {
+    } else if (finalPrompt.trim()) {
+        // Non-interactive mode (prompt from cli, stdin, or both)
         const { default: run } = await import('./run.js');
-        run(prompt, flags, false);
+        run(finalPrompt, flags, false);
     } else {
         cli.showHelp();
     }
