@@ -1,37 +1,48 @@
-import { ToolRunner } from '../tools/index.js';
+import { type Tool, ToolRunner } from '../tools/index.js';
 import { listFilesTool } from '../tools/listFiles.js';
 import { readFileTool } from '../tools/readFile.js';
 import { createFileTool } from '../tools/createFile.js';
 import { deleteFileTool } from '../tools/deleteFile.js';
 import { executeCommandTool } from '../tools/executeCommand.js';
 import { createDelegateTaskTool } from '../tools/delegateTask.js';
-import { type AiClient } from './types.js';
+import { searchWebTool } from '../tools/searchWeb.js';
+import { type Config } from './config.js';
 
-const allTools = [
-    listFilesTool,
-    readFileTool,
-    createFileTool,
-    deleteFileTool,
-    executeCommandTool,
-];
+// A map of all available tool definitions.
+const toolImplementations: { [name: string]: Tool | ((config: Config, flags: any) => Tool) } = {
+    search_web: searchWebTool,
+    list_files: listFilesTool,
+    read_file: readFileTool,
+    create_file: createFileTool,
+    delete_file: deleteFileTool,
+    execute_command: executeCommandTool,
+    delegate_task: createDelegateTaskTool,
+};
 
-export function initializeToolRunner(client: AiClient, allowedToolNames?: string[]): ToolRunner {
+// Export the list of tool names for use in other parts of the application, like the agent creation form.
+export const allToolNames = Object.keys(toolImplementations);
+
+export function initializeToolRunner(
+    config: Config,
+    flags: { provider?: string, model?: string },
+    allowedToolNames?: string[]
+): ToolRunner {
     const toolRunner = new ToolRunner();
 
-    let toolsToRegister = allTools;
+    // If no specific tools are allowed, it's the main agent; give it all tools.
+    // Otherwise, use the provided list.
+    const toolsToRegisterNames = allowedToolNames || allToolNames;
 
-    // If a list of allowed tools is provided, filter the list.
-    if (allowedToolNames) {
-        toolsToRegister = allTools.filter(tool => allowedToolNames.includes(tool.name));
-    } else {
-        // If no specific tools are allowed, it's the main agent.
-        // Add the delegation tool.
-        const delegateTool = createDelegateTaskTool(client);
-        toolsToRegister.push(delegateTool);
-    }
-
-    for (const tool of toolsToRegister) {
-        toolRunner.register(tool);
+    for (const toolName of toolsToRegisterNames) {
+        const toolImplementation = toolImplementations[toolName];
+        if (toolImplementation) {
+            // If the tool is a function (i.e., it requires config/flags), create it.
+            // Otherwise, use the static tool object.
+            const tool = typeof toolImplementation === 'function'
+                ? toolImplementation(config, flags)
+                : toolImplementation;
+            toolRunner.register(tool);
+        }
     }
 
     return toolRunner;

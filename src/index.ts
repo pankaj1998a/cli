@@ -1,10 +1,12 @@
 import React from 'react';
 import { render } from 'ink';
 import meow from 'meow';
-import { loadConfig, saveConfig } from './core/config.js';
+import { loadConfig, saveConfig, getConfigPath } from './core/config.js';
 import { clearHistory } from './core/history.js';
 import { loadAgents } from './core/subagents.js';
 import ListAgents from './components/ListAgents.js';
+import AgentForm from './components/AgentForm.js';
+import DeleteAgentConfirmation from './components/DeleteAgentConfirmation.js';
 import os from 'os';
 import path from 'path';
 
@@ -15,22 +17,30 @@ const cli = meow(
 	  $ xcode agent [sub-command] [prompt]
 
 	Commands
-	  agent [prompt]                Run the default agent with tool-use capabilities
-	  agent create                  Instructions to create a new custom sub-agent
-	  agent list                    List all available custom sub-agents
-	  config <provider> <apiKey>    Set API key for a provider
-	  history                       Manage conversation history
+	  agent [prompt]                  Run the default agent with tool-use capabilities
+	  agent create                    Interactively create a new custom sub-agent
+	  agent list                      List all available custom sub-agents
+	  agent edit <name>               Interactively edit a custom sub-agent
+	  agent delete <name>             Delete a custom sub-agent
+	  config get                      Show the current configuration (keys redacted)
+	  config path                     Show the path to the configuration file
+	  config set <provider> <apiKey>  Set API key for a provider
+	  history --clear                 Clear conversation history
 
 	Options
-		--provider, -p    AI provider to use (e.g., gemini, claude)
+		--provider, -p    AI provider to use (e.g., gemini, claude, nvidia)
 		--model, -m       Specify a model to use for the selected provider
-		--clear           Clear conversation history
+		--clear           Clear conversation history (legacy, use 'history --clear')
 
 	Examples
 	  $ xcode "Hello, world!"
-	  $ xcode agent "Read the file 'test.txt' and summarize it." --provider openai --model gpt-4
+	  $ xcode agent "Read 'test.txt' and summarize it." --provider openai
 	  $ xcode agent create
 	  $ xcode agent list
+	  $ xcode agent edit code_reviewer
+	  $ xcode agent delete code_reviewer
+	  $ xcode config set openai sk-xxxxxxxx
+	  $ xcode config get
 `,
   {
     importMeta: import.meta,
@@ -56,16 +66,48 @@ async function main() {
     const subCommand = input[1];
 
     if (command === 'config') {
-        const [, provider, apiKey] = input;
-        if (!provider || !apiKey) { cli.showHelp(); return; }
-        const config = await loadConfig();
-        config[provider] = { apiKey };
-        await saveConfig(config);
-        console.log(`API key for ${provider} saved.`);
+        if (subCommand === 'get') {
+            const config = await loadConfig();
+            const redactedConfig = { ...config };
+            for (const provider in redactedConfig) {
+                if (redactedConfig[provider]?.apiKey) {
+                    redactedConfig[provider].apiKey = '********';
+                }
+            }
+            console.log(JSON.stringify(redactedConfig, null, 2));
+            return;
+        }
+
+        if (subCommand === 'path') {
+            console.log(getConfigPath());
+            return;
+        }
+
+        if (subCommand === 'set') {
+            const provider = input[2];
+            const apiKey = input[3];
+            if (!provider || !apiKey) {
+                console.error('Error: Please provide both a provider and an API key for the "set" command.');
+                cli.showHelp();
+                return;
+            }
+            const config = await loadConfig();
+            if (!config[provider]) {
+                config[provider] = {};
+            }
+            config[provider].apiKey = apiKey;
+            await saveConfig(config);
+            console.log(`API key for ${provider} saved.`);
+            return;
+        }
+
+        // If 'config' is called with no valid subcommand
+        console.error('Invalid "config" command. Use "get", "path", or "set".');
+        cli.showHelp();
         return;
     }
 
-    if (command === 'history' && flags.clear) {
+    if ((command === 'history' && flags.clear) || (flags.clear && !command)) {
         await clearHistory();
         console.log('Conversation history cleared.');
         return;
@@ -79,27 +121,35 @@ async function main() {
         }
 
         if (subCommand === 'create') {
-            const agentsFilePath = path.join(os.homedir(), '.config', 'xcode', 'agents.json');
-            console.log(`
-To create a new sub-agent, please manually edit the configuration file.
+            render(React.createElement(AgentForm));
+            return;
+        }
 
-File Path: ${agentsFilePath}
+        if (subCommand === 'edit') {
+            const agentName = input[2];
+            if (!agentName) {
+                console.error('Error: Please provide the name of the agent to edit.');
+                cli.showHelp();
+                return;
+            }
+            const agents = await loadAgents();
+            const agentToEdit = agents.find(a => a.name === agentName);
+            if (!agentToEdit) {
+                console.error(`Error: Agent "${agentName}" not found.`);
+                return;
+            }
+            render(React.createElement(AgentForm, { agentToEdit }));
+            return;
+        }
 
-Add a new agent object to the JSON array in that file. Here is an example:
-
-[
-  {
-    "name": "code_reviewer",
-    "persona": "You are an expert code reviewer. You analyze code for bugs, style issues, and potential improvements. You only respond with code suggestions.",
-    "tools": [
-      "read_file",
-      "list_files"
-    ]
-  }
-]
-
-Available tools are: list_files, read_file, create_file, delete_file, execute_command.
-`);
+        if (subCommand === 'delete') {
+            const agentName = input[2];
+            if (!agentName) {
+                console.error('Error: Please provide the name of the agent to delete.');
+                cli.showHelp();
+                return;
+            }
+            render(React.createElement(DeleteAgentConfirmation, { agentName }));
             return;
         }
 

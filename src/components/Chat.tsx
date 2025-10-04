@@ -1,18 +1,37 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import TextInput from 'ink-text-input';
+import SyntaxHighlight from 'ink-syntax-highlight';
 import { type AiClient, type Message, type ToolCall } from '../core/types.js';
 import { loadHistory, saveHistory, clearHistory } from '../core/history.js';
-import { initializeToolRunner, ToolRunner } from '../core/agent.js';
+import { initializeToolRunner } from '../core/agent.js';
 import { type SubAgent, loadAgents } from '../core/subagents.js';
+import { type Config, loadConfig } from '../core/config.js';
+
+
+// This function parses the assistant's content and renders code blocks with syntax highlighting.
+const renderAssistantContent = (content: string) => {
+    const parts = content.split(/(\`\`\`(?:\w+)?\n[\s\S]*?\n\`\`\`)/);
+
+    return parts.map((part, index) => {
+        const codeBlockMatch = part.match(/\`\`\`(\w+)?\n([\s\S]*?)\n\`\`\`/);
+        if (codeBlockMatch) {
+            const language = codeBlockMatch[1] || 'bash';
+            const code = codeBlockMatch[2];
+            return <SyntaxHighlight key={index} code={code} language={language} />;
+        }
+        // Render plain text parts
+        return <Text key={index}>{part}</Text>;
+    });
+};
 
 const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:string }) => {
   const { exit } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [subAgents, setSubAgents] = useState<SubAgent[]>([]);
+  const [appConfig, setAppConfig] = useState<Config>({});
   const messageIdCounter = useRef(0);
-  const toolRunner = useRef<ToolRunner>(initializeToolRunner(client));
   const isInitialLoad = useRef(true);
 
   useInput((input, key) => {
@@ -39,8 +58,10 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
     let currentHistory = [...history, { role: 'user', content: prompt } as Message];
     addMessage('user', prompt);
 
+    const toolRunner = initializeToolRunner(appConfig, {}); // Pass config and flags
+
     for (let turn = 0; turn < 5; turn++) {
-        const toolSchemas = toolRunner.current.getToolSchemas();
+        const toolSchemas = toolRunner.getToolSchemas();
         const response = await client.generateResponse(currentHistory, toolSchemas);
 
         if (response.isToolCall && response.toolCalls) {
@@ -49,7 +70,7 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
             addMessage('assistant', toolCalls);
 
             for (const toolCall of toolCalls) {
-                const toolResult = await toolRunner.current.run(
+                const toolResult = await toolRunner.run(
                     toolCall.function.name,
                     Object.values(JSON.parse(toolCall.function.arguments))
                 );
@@ -69,12 +90,13 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
     }
     addMessage('assistant', '[Agent reached max turns]');
 
-  }, [client]);
+  }, [client, appConfig]);
 
   useEffect(() => {
     const init = async () => {
-      const [history, agents] = await Promise.all([loadHistory(), loadAgents()]);
+      const [history, agents, config] = await Promise.all([loadHistory(), loadAgents(), loadConfig()]);
       setSubAgents(agents);
+      setAppConfig(config);
 
       if (history.length > 0) {
         setMessages(history.map((m, i) => ({ ...m, id: i })));
@@ -141,7 +163,7 @@ const Chat = ({ client, initialPrompt }: { client: AiClient, initialPrompt:strin
 
   const renderContent = (content: string | ToolCall[]) => {
       if (typeof content === 'string') {
-          return <Text>{content}</Text>;
+          return <Box flexDirection="column">{renderAssistantContent(content)}</Box>;
       }
       return (
         <Box flexDirection="column" borderStyle="round" paddingX={1} borderColor="gray">

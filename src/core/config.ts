@@ -29,3 +29,7 @@ export async function saveConfig(config: Config): Promise<void> {
 	await fs.mkdir(configDir, { recursive: true });
 	await fs.writeFile(configFile, JSON.stringify(config, null, 2));
 }
+
+export function getConfigPath(): string {
+	return configFile;
+}

@@ -1,59 +1,74 @@
-import { type AiClient, type Message } from './types.js';
+import { type Message } from './types.js';
 import { initializeToolRunner } from './agent.js';
 import { type SubAgent } from './subagents.js';
+import { type Config } from './config.js';
+import { getClient } from '../clients/index.js';
 
-export async function processAgentTurns(
-    client: AiClient,
+export async function* processAgentTurns(
+    config: Config,
+    flags: { provider?: string, model?: string },
     prompt: string,
     agentConfig?: SubAgent,
-): Promise<Message[]> {
+): AsyncGenerator<Message> {
+    const provider = agentConfig?.provider || flags.provider || 'mock';
+    const model = agentConfig?.model || flags.model;
+    const client = getClient(provider, config, { model });
+
+    // Initialize the tool runner with the correct client and tools for this agent.
+    // Note: The `client` is passed here for the `delegate_task` tool, which needs it to spawn sub-agents.
+    // This is a bit of a legacy design; a better approach would be to pass config/flags to the tool initializer.
     const toolRunner = agentConfig
-        ? initializeToolRunner(client, agentConfig.tools)
-        : initializeToolRunner(client);
+        ? initializeToolRunner(config, flags, agentConfig.tools)
+        : initializeToolRunner(config, flags);
 
     const messages: Message[] = [];
-    if (agentConfig?.persona) {
-        // This is a simplified way to handle system prompts.
-        // A more robust solution might add a 'system' role to the Message type.
-        messages.push({ role: 'assistant', content: agentConfig.persona });
-    }
-    messages.push({ role: 'user', content: prompt });
 
-    const maxTurns = 5; // Prevent infinite loops
+    if (agentConfig?.persona) {
+        const personaMsg = { role: 'system' as const, content: agentConfig.persona };
+        messages.push(personaMsg);
+        yield personaMsg;
+    }
+
+    const userMsg = { role: 'user' as const, content: prompt };
+    messages.push(userMsg);
+    yield userMsg;
+
+    const maxTurns = 5;
 
     for (let turn = 0; turn < maxTurns; turn++) {
         const toolSchemas = toolRunner.getToolSchemas();
         const response = await client.generateResponse(messages, toolSchemas);
 
         if (response.isToolCall && response.toolCalls) {
-            messages.push({ role: 'assistant', content: response.toolCalls });
+            const assistantMsg = { role: 'assistant' as const, content: response.toolCalls };
+            messages.push(assistantMsg);
+            yield assistantMsg;
 
             for (const toolCall of response.toolCalls) {
                 const args = JSON.parse(toolCall.function.arguments);
                 const argsArray = Object.values(args);
                 const toolResult = await toolRunner.run(toolCall.function.name, argsArray);
 
-                messages.push({
-                    role: 'tool',
+                const toolMsg = {
+                    role: 'tool' as const,
                     tool_call_id: toolCall.id,
                     content: toolResult,
-                });
+                };
+                messages.push(toolMsg);
+                yield toolMsg;
             }
         } else {
-            // It's a final text response
+            // It's a final text response, which might be a stream.
             if (response.textStream) {
-                let fullText = '';
-                for await (const chunk of response.textStream) {
-                    fullText += chunk;
-                }
-                messages.push({ role: 'assistant', content: fullText });
+                // Yield a final assistant message with the stream as content.
+                // The UI component will be responsible for consuming this stream.
+                yield { role: 'assistant', content: response.textStream };
             } else {
-                 messages.push({ role: 'assistant', content: "[No response from AI]" });
+                yield { role: 'assistant', content: "[No response from AI]" };
             }
-            return messages;
+            return; // End of conversation.
         }
     }
 
-    messages.push({ role: 'assistant', content: "The agent reached the maximum number of turns without providing a final answer." });
-    return messages;
+    yield { role: 'assistant', content: "The agent reached the maximum number of turns without providing a final answer." };
 }
